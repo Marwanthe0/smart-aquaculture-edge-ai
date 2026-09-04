@@ -539,6 +539,40 @@ void loop() {
       postBatchReadings(tempC, phVal, turbNTU, wetness);
     }
 
+    // Apply DSP low-pass filter to raw analog readings
+    float smoothPh = applyLowPassFilter(phVal, filteredPh);
+    float smoothTurb = applyLowPassFilter(turbNTU, filteredTurbidity);
+    dspInitialized = true;
+
+    // Run on-device TinyML inference (< 1 ms latency)
+    int waterCondition = predict_water_quality(tempC, smoothPh, smoothTurb);
+    const char *statusStr = get_water_status_str(waterCondition);
+
+    Serial.println("----------------------------------------");
+    Serial.print("Edge-AI Telemetry: Condition = ");
+    Serial.print(statusStr);
+    Serial.print(" | DSP pH = ");
+    Serial.print(smoothPh, 2);
+    Serial.print(" | DSP Turb = ");
+    Serial.println(smoothTurb, 1);
+    Serial.println("----------------------------------------");
+
+    // Autonomous edge fail-safe: Force emergency aeration on critical water
+    // stress
+    if (waterCondition == 2 && !oxygenIsOn) {
+      pinMode(OXYGEN_PIN, OUTPUT);
+      digitalWrite(OXYGEN_PIN, LOW); // Active-low relay trigger
+      oxygenIsOn = true;
+      Serial.println("[FAIL-SAFE] Critical state detected by Edge-AI. Oxygen "
+                     "pump engaged autonomously.");
+      printMotorStatus();
+    }
+
+    // Dispatch smoothed sensor readings in batch HTTP request
+    if (WiFi.status() == WL_CONNECTED) {
+      postBatchReadings(tempC, smoothPh, smoothTurb, wetness);
+    }
+
     // Trigger next temperature reading asynchronously for next cycle
     tempSensor.requestTemperatures();
 
