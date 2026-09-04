@@ -44,3 +44,68 @@ classifier.fit(X, y)
 
 accuracy = classifier.score(X, y) * 100.0
 print(f"Model trained successfully. Accuracy: {accuracy:.2f}%")
+
+#python to cpp generation
+def export_tree_to_cpp(tree, feature_names):
+    left = tree.tree_.children_left
+    right = tree.tree_.children_right
+    threshold = tree.tree_.threshold
+    features = [feature_names[i] for i in tree.tree_.feature]
+    values = tree.tree_.value
+
+    def recurse(node, depth):
+        indent = "    " * depth
+        if left[node] != right[node]:
+            var_name = features[node]
+            thresh_val = threshold[node]
+            return (
+                f"{indent}if ({var_name} <= {thresh_val:.4f}f) {{\n"
+                f"{recurse(left[node], depth + 1)}"
+                f"{indent}}} else {{\n"
+                f"{recurse(right[node], depth + 1)}"
+                f"{indent}}}\n"
+            )
+        else:
+            predicted_class = int(np.argmax(values[node]))
+            return f"{indent}return {predicted_class}; // Class {predicted_class}\n"
+
+    cpp_code = f"""#ifndef WATER_QUALITY_MODEL_H
+#define WATER_QUALITY_MODEL_H
+
+// Auto-generated TinyML Water Quality Classifier for ESP-32
+// Author: Shafikul Islam Marwan
+// Classes: 0 = OPTIMAL, 1 = WARNING, 2 = CRITICAL
+
+inline int predict_water_quality(float temperature, float ph, float turbidity) {{
+{recurse(0, 1)}}}
+
+inline const char* get_water_status_str(int status) {{
+    switch (status) {{
+        case 0: return "OPTIMAL";
+        case 1: return "WARNING";
+        case 2: return "CRITICAL";
+        default: return "UNKNOWN";
+    }}
+}}
+
+#endif // WATER_QUALITY_MODEL_H
+"""
+    return cpp_code
+
+
+# Generate C++ header content
+header_content = export_tree_to_cpp(classifier, ["temperature", "ph", "turbidity"])
+
+# Save to local tinyml directory
+local_header_path = os.path.join(os.path.dirname(__file__), "water_quality_model.h")
+with open(local_header_path, "w") as f:
+    f.write(header_content)
+print(f"Generated C++ model at: {local_header_path}")
+
+# Copy into esp32/esp_code firmware folder so Arduino sketch can include it directly
+firmware_header_path = os.path.join(
+    os.path.dirname(__file__), "..", "esp32", "esp_code", "water_quality_model.h"
+)
+with open(firmware_header_path, "w") as f:
+    f.write(header_content)
+print(f"Linked C++ model to firmware: {firmware_header_path}")
