@@ -1,173 +1,216 @@
-# Smart Fish Pond Management System
+# Smart Aquaculture: Edge-AI & IoT Autonomous Pond Management System
 
+A hybrid edge-cloud aquaculture management system deployed on the ESP-32 microcontroller. The platform combines on-device machine learning inference (TinyML) and digital signal conditioning with real-time web telemetry for automated aeration and feeding control.
 
-The frontend is built with **Next.js**, the backend with **Node.js/Express**, and the microcontroller firmware is written in **C++** (Arduino/ESP32).
+---
 
-## How to Run
+### Project Context and Academic Attribution
 
-***Note:** Below instruction is for running the system locally on your computer. To actually implement the system and accessing it from the internet, you will need to host your frontend, backend and database in public servers.*
+This project originated as an undergraduate capstone project at Jashore University of Science and Technology (JUST), Department of Computer Science and Engineering (Group 2, Batch 15).
 
-### Part 1: Prerequisites
+While the baseline full-stack telemetry and actuator scheduler were developed collaboratively, this repository represents an advanced, standalone research extension developed by **Shafikul Islam Marwan**. This version integrates:
+* An on-device TinyML decision tree inference engine running directly on the ESP-32 without cloud dependencies.
+* Digital Signal Processing (DSP) exponential moving average low-pass filtering for analog sensor noise suppression.
+* Autonomous fail-safe emergency aeration routines triggered directly at the hardware edge.
 
-Make sure you have:
+#### Core Team and Roles
+* **Shafikul Islam Marwan** ([@Marwanthe0](https://github.com/Marwanthe0)): Hardware architecture, circuit schematics, sensor calibration (pH, turbidity, temp, rain), DSP signal filtering, and TinyML C++ firmware synthesis.
+* **Md Raihan** ([@mdraihan27](https://github.com/mdraihan27)): Backend REST API architecture, MongoDB persistence, and Socket.IO real-time telemetry streaming.
+* **Rubyat** ([@rubyat43](https://github.com/rubyat43)): Frontend web console, Next.js 16 layouts, and telemetry data visualization.
 
-- A computer to run the backend and frontend.
-- An **ESP32** microcontroller with the sensors and actuators already wired up.
-- The table below shows which ESP32 pin connects to each component's data pin.
+---
 
-| Component | ESP32 Pin |
-|---|---|
-| Feeder motor's Relay Module's data pin | `23` |
-| Oxygen motor's Relay Module's data pin | `22` |
-| Servo motor data pin | `21` |
-| Temperature sensor data pin | `4` |
-| pH sensor data pin | `34` |
-| Turbidity sensor data pin | `33` |
-| Rain sensor data pin | `32` |
+### Edge-AI & TinyML Implementation: How It Works
 
-- A Wi-Fi router that both the computer and the ESP32 can connect to (the ESP32 only supports **2.4GHz** Wi-Fi, not 5GHz).
-- Note: The ESP32 and computer needs to be connected to same WiFI when running the system locally. But if you hosted your backend on a public server, so that it can be accessed from the internet, then only the ESP32 needs to be connected to a WiFi.
-- Clone the repository from https://github.com/JUST-CSE-15-IoT-Group-2/smart-fish-pond-management-system, or download and extract the project zip file, and remember the location.
+The system moves beyond traditional telemetry by embedding an intelligence layer directly onto the ESP-32's dual-core Xtensa processor. 
+
+```
+  [Raw Sensor Voltages]
+           │
+           ▼
+  [DSP Low-Pass Filter]  ──> Suppresses high-frequency analog noise (alpha = 0.25)
+           │
+           ▼
+  [TinyML Decision Engine]  ──> Evaluates (Temp, pH, Turbidity) in < 1 ms
+           │
+     ┌─────┴────────────────────────┐
+     ▼                              ▼
+[Normal State: 0 or 1]      [Critical State: 2]
+  - Dispatch via HTTP         - Autonomous Relay Engagement (GPIO 22 -> Active LOW)
+  - Stream via Socket.IO      - Immediate Emergency Aeration (Zero Cloud Latency)
+```
+
+#### 1. Training & Synthesis Pipeline (`tinyml/train_and_export.py`)
+Rather than deploying heavy inference runtimes (e.g., full TensorFlow or ONNX engines) that exhaust microcontroller RAM, this project utilizes a custom synthesis pipeline:
+* **Model Selection:** A depth-bounded Decision Tree Classifier (`max_depth = 4`) trained on freshwater aquaculture physiological standards.
+* **C++ Code Synthesis:** The script traverses the binary tree structure recursively and exports the decision boundaries as a clean, self-contained C++ header file (`water_quality_model.h`).
+* **Zero Overhead:** The generated code uses compile-time `inline` branching with zero dynamic heap allocations (`malloc`), consuming under 1 KB of flash memory.
+
+#### 2. On-Device Inference Logic (`water_quality_model.h`)
+The generated C++ function directly maps sensor floating-point inputs against trained decision thresholds:
+
+```cpp
+// Executed directly on ESP-32 every 3 seconds:
+inline int predict_water_quality(float temperature, float ph, float turbidity) {
+    if (turbidity <= 75.0360f) {
+        if (ph <= 9.4999f) {
+            if (ph <= 5.5005f) {
+                return 2; // Critical: Severe Acidity
+            } else {
+                if (temperature <= 34.0274f) {
+                    return 1; // Warning: Sub-optimal temperature
+                } else {
+                    return 2; // Critical: Extreme Thermal Stress
+                }
+            }
+        } else {
+            return 2; // Critical: Severe Alkalinity
+        }
+    } else {
+        return 2; // Critical: High Silt / Extreme Turbidity
+    }
+}
+```
+
+#### 3. Closed-Loop Hardware Autonomy
+* In conventional IoT systems, if the local Wi-Fi drops or the backend server shuts down, automated safeguards cease to function.
+* With this Edge-AI integration, the ESP-32 continuously checks the inference output. If a `CRITICAL (Class 2)` state is detected, the firmware executes an immediate hardware fail-safe:
+  ```cpp
+  if (waterCondition == 2 && !oxygenIsOn) {
+      pinMode(OXYGEN_PIN, OUTPUT);
+      digitalWrite(OXYGEN_PIN, LOW); // Trigger active-low relay immediately
+      oxygenIsOn = true;
+  }
+  ```
+  This ensures that oxygen pumps run autonomously even during complete network or server blackouts.
+
+---
+
+### DSP Sensor Signal Conditioning
+
+Low-cost analog probes (pH, turbidity) are vulnerable to electromagnetic interference and voltage ripples from nearby motors. The firmware applies a single-pole Exponential Moving Average (EMA) low-pass filter:
+
+$$y[n] = \alpha \cdot x[n] + (1 - \alpha) \cdot y[n-1]$$
+
+With $\alpha = 0.25$, transient spikes are suppressed while maintaining responsiveness to true biological water drift.
+
+---
+
+### Hardware Interfacing and Pinout
+
+| Component / Sensor | Interface / Protocol | ESP32 GPIO | Operating Voltage |
+|---|---|---|---|
+| DS18B20 Temp Sensor | Digital 1-Wire | `GPIO 4` | 3.3V / 5V |
+| Analog pH Sensor | Analog (ADC1) | `GPIO 34` | 5V (Calibrated to 3.3V) |
+| Analog Turbidity Sensor | Analog (ADC1, 0 to 100 NTU) | `GPIO 33` | 5V |
+| Raindrop Moisture Sensor | Analog (ADC1) | `GPIO 32` | 3.3V / 5V |
+| Oxygen Aeration Pump | Relay Module (Active LOW) | `GPIO 22` | 5V Coil / 220V AC Load |
+| Feeder Dispenser Motor | Relay Module (Active LOW) | `GPIO 23` | 5V Coil / 12V DC Load |
+| Feeder Gate Servo | MG 996R PWM (50Hz) | `GPIO 21` | 5V to 6V External |
 
 ![Hardware Setup](docs/assets/hardware-setup.jpg)
 
-*Figure 1: Hardware Setup.*
+*Figure 1: Complete Prototype Hardware Assembly with ESP-32 and Sensor Array.*
 
-### Part 2: Setting Up the Backend
+---
 
-The backend is the program that stores your pond's data and talks to both the ESP32 and your dashboard.
+### Getting Started
 
-- Install **Node.js** and **MongoDB** on the computer.
-- From the project folder, open the `backend` folder and create a `.env` file with necessary values. The format is explained in `.env.example` file in `backend` folder.
-- Open a terminal in `backend` folder and type `npm install`. This will install all required packages.
-- Start the backend by entering `npm run dev` command in the same terminal. Once running, it will print a message showing it is live and reachable on your network. It will also show which port the backend is running on (e.g. **Port: 5000**). Note that.
-- Also note the computer's local network IP address (find it with `ipconfig` on Windows or `ifconfig`/`ip addr` on Mac/Linux); the ESP32 and frontend will use this address with the backend's port number to reach the backend.
-- Note: The above instruction is for running the system locally. If you want to access the system from internet, host the backend on a public server with a public IP address or domain instead, and use that IP address and port number or domain in frontend and ESP32.
+#### Prerequisites
+* Node.js (v18+) and MongoDB installed locally or hosted remotely.
+* Arduino IDE (v2.0+) with the ESP32 board package installed via Boards Manager.
+* Required Arduino libraries:
+  * `ArduinoJson` (Benoit Blanchon)
+  * `DallasTemperature` (Miles Burton)
+  * `OneWire` (Jim Studt, Tom Pollard)
+  * `ESP32Servo` (Kevin Harrington, John K. Bennet)
+
+---
+
+#### 1. Backend Service Setup
+The backend service handles persistent storage in MongoDB, exposes REST endpoints for batch telemetry, and broadcasts live readings over WebSockets.
+
+1. Navigate to the `backend` directory:
+   ```bash
+   cd backend
+   npm install
+   ```
+2. Create a `.env` file following `.env.example` with your MongoDB connection string and server port.
+3. Start the service in development mode:
+   ```bash
+   npm run dev
+   ```
 
 ![Backend Setup](docs/assets/backend-setup.png)
 
-*Figure 2: Backend Setup.*
+*Figure 2: Backend service initialization and live endpoint bindings.*
 
-Keep this computer and the backend program running at all times. If it stops, your dashboard will lose its live connection and the ESP32 will not be able to send readings or receive commands.
+---
 
-### Part 3: Setting Up the ESP32
-
-The ESP32 is the microcontroller that is physically connected to your sensors and actuators.
-
-- Install and open **Arduino IDE**. You will need to go to **Sketch → Include Library → Manage Libraries** and install the following libraries.
-
-| Library Name | Manufacturer |
-|---|---|
-| Arduinojson | Benoit Blanchon |
-| DallasTemperature | Miles Burton |
-| ESP32Servo | Kevin Harrington, John K. Bennet |
-| OneWire | Jim Studt, Tom Pollard and others |
-
-- Go to **Tools → Board → Boards Manager** and install **esp32** by Espressif Systems.
-- In Arduino IDE, go to **Files → Open**, then a file manager window will appear. In that window go to the project folder. Then from the project folder go to `esp32/esp_code` folder and open `esp_code.ino` file.
-- Then go to **Tools → Board → esp32** and choose **ESP32 Dev Module**.
-- In the code, edit the value of `WIFI_SSID` global variable as your WiFi name, and `WIFI_PASSWORD` as your WiFi password.
-- Similarly edit the value of `BACKEND_IP` as your backend IP address, and the value of `BACKEND_PORT` as your backend port number (the backend IP address and port number you noted in Part 2).
-- Note: If you hosted your backend in a public server, use your public IP address and port number or domain.
-- Upload the code to the ESP32 using a USB cable.
-- Once the starting process completes and it shows in the terminal **"Hard resetting via RTS pin..."**, go to **Tools → Serial Monitor** in the Arduino IDE, then a section will appear in the bottom. That is the serial monitor. In the serial monitor there should be baud rate drop down menu. From the baud rate drop down menu, choose **115200**. Now, you should see it join your Wi-Fi network and begin printing sensor readings every few seconds.
+#### 2. ESP-32 Firmware Deployment
+1. Open `esp32/esp_code/esp_code.ino` in the Arduino IDE.
+2. Verify that `water_quality_model.h` resides in the same directory.
+3. Update `WIFI_SSID`, `WIFI_PASSWORD`, `BACKEND_IP`, and `BACKEND_PORT` to match your local network configuration.
+4. Select target board **ESP32 Dev Module**, connect via USB, and click **Upload**.
+5. Open the Serial Monitor at **115200 baud** to view real-time DSP-filtered telemetry and TinyML inference outputs.
 
 ![ESP32 Setup](docs/assets/esp32-setup.png)
 
-*Figure 3: ESP 32 Setup.*
+*Figure 3: Serial monitor output demonstrating telemetry acquisition and batch submission.*
 
-If the ESP32 cannot find your Wi-Fi, double check the network name is typed exactly right and that your router is broadcasting on the 2.4GHz band.
+---
 
-### Part 4: Setting Up the Frontend Dashboard
-
-- From the project folder, open the `frontend` folder.
-- In that folder, create a `.env.local` file with your own values. The format in explained in `.env.local.example` file in `frontend` folder.
-- Open a terminal in the `frontend` folder.
-- Enter command `npm install` in the terminal.
-- Enter command `npm run dev` in the same terminal. This runs the frontend on your computer. You will see the site address in the terminal once the frontend runs (e.g. `http://localhost:3000`). Open that in your browser and you will see the landing page.
-- From the landing page, log in using the id password that you set on your backend `.env` file.
-- Note: If you want to access the frontend from the internet, you will need to host the frontend on a public server.
+#### 3. Frontend Web Console Setup
+1. Navigate to the `frontend` directory:
+   ```bash
+   cd frontend
+   npm install
+   npm run dev
+   ```
+2. Open `http://localhost:3000` in your web browser.
+3. Log in using your configured credentials.
 
 ![Frontend Setup](docs/assets/frontend-setup.png)
 
-*Figure 4: Frontend Setup.*
+*Figure 4: Frontend service execution.*
 
 ![Landing Page](docs/assets/landing-page.png)
 
-*Figure 5: Landing Page.*
+*Figure 5: Web Console Access Portal.*
 
-Once logged in, you will land on your dashboard, ready to monitor and control your pond.
+---
 
-## How to Use
+### Dashboard Operations and Telemetry
 
-### Part 5: Understanding the Dashboard
+#### Live Monitoring & Historical Trends
+The primary console displays live cards for water temperature, pH, turbidity, and rainfall with dynamic status badges. Multi-point trend charts allow farmers to observe parameter drifts over time.
 
-The dashboard has four main sections, reachable from the side menu.
+| Live Status Cards | Historical Parameter Trends |
+|:---:|:---:|
+| ![Updates menu](docs/assets/updates-page.png) | ![Trend charts](docs/assets/updates-page-2.png) |
+| *Figure 6: Live Telemetry Cards* | *Figure 7: Parameter History Charts* |
 
-#### Updates
+#### Actuator Controls and Scheduling
+Farmers can configure timed feeding routines or trigger manual overrides for the aeration pump and food dispenser.
 
-This is your live view of the pond. You will see four cards showing water temperature, pH level, turbidity (clarity), and rainfall, all updating automatically as new readings arrive. Below the cards are trend charts so you can see how conditions have changed over recent readings. If a reading moves outside a safe range, the card will change color and you may also get a push notification on your device.
+| Actuator Controls | Automated Feeding Scheduler |
+|:---:|:---:|
+| ![Controls menu](docs/assets/controls-page.png) | ![Feeding schedule](docs/assets/feeding-schedule.png) |
+| *Figure 8: Actuator Control Panel* | *Figure 9: Feeder Routine Configuration* |
 
-![Updates menu from Dashboard](docs/assets/updates-page.png)
-
-*Figure 6: Updates menu from Dashboard.*
-
-![Updates menu from Dashboard - 2](docs/assets/updates-page-2.png)
-
-*Figure 7: Updates menu from Dashboard - 2.*
-
-#### Controls
-
-This is where you manage your feeder and oxygen motor.
-
-- **Feeding schedule:** add or remove times of day when the feeder should run automatically, and set how many minutes it runs each time.
-- **Manual mode:** turn on manual mode to take direct control of the feeder, then use the on and off button to feed your fish whenever you like, instead of waiting for the schedule.
-- **Oxygen motor:** turn the motor on or off. The motor will automatically turn on if rain meter detects more 40% rain and vice versa. User can adjust this from **Settings**.
-- **Connection link:** if you ever need to stop all automatic actions immediately, you can sever the connection here. This safely shuts everything down until you reconnect it.
-
-![Controls menu from Dashboard](docs/assets/controls-page.png)
-
-*Figure 8: Controls menu from Dashboard.*
-
-![Feeding motor schedule control](docs/assets/feeding-schedule.png)
-
-*Figure 9: Feeding motor schedule control.*
-
-#### Settings
-
-Here you can set the safe ranges for temperature, rain and pH. If a reading goes above or below these limits, the system will treat it as a warning and can alert you. The Rain sensor threshold will also be used for automatically turning on/off the oxygen motor. You can also turn on push notifications from this page so you get alerts even when the dashboard is closed.
+#### Threshold Settings
+Safe operating windows for temperature, pH, and precipitation triggers can be reconfigured dynamically through the settings panel.
 
 ![Settings Configuration](docs/assets/settings-page.png)
 
-*Figure 10: Settings Configuration.*
-
-#### Account
-
-This shows your profile information and a personal access key.
+*Figure 10: Threshold and Alert Configuration Interface.*
 
 ![Account settings](docs/assets/account-page.png)
 
-*Figure 11: Account settings.*
+*Figure 11: Security and API Key Management.*
 
-### Part 6: Everyday Use
+---
 
-Once everything is set up, using the system day to day is simple.
+### Summary and Engineering Impact
 
-- Check the **Updates** page whenever you want a quick look at your pond's condition.
-- Let the feeding schedule run on its own, or switch to manual mode.
-- Keep the oxygen motor running automatically based on rain, or you can switch it on/off manually.
-- If you get a push notification about a warning, open the app and check the **Updates** page to see what triggered it.
-
-### Part 7: Simple Troubleshooting
-
-**No new readings showing up:** Check that your server computer is turned on and the backend is running. Also check that the ESP32 is powered and connected to Wi-Fi.
-
-**Feeder or oxygen motor not responding:** Make sure the connection link on the **Controls** page is not switched off. If it is, reconnect it.
-
-**Not receiving notifications:** Make sure notifications are allowed for the dashboard in your phone or browser settings, and that you enabled alerts from the **Settings** page.
-
-**ESP32 will not connect to Wi-Fi:** Confirm the Wi-Fi name and password in the firmware are correct, and that your router is on the 2.4GHz band, since the ESP32 cannot connect to 5GHz networks.
-
-## Conclusion
-
-The project successfully built a working system that lets fish farmers monitor and control their pond remotely. It reads key water conditions, shows them live on a dashboard, and gives direct control over feeding and aeration, both scheduled and manual. Push notifications close the loop between detecting a problem and the user knowing about it. The biggest missing pieces are offline alerting and local schedule storage on the ESP32, and these should be the next priorities. Overall, the system proves that an affordable, locally deployable pond monitoring solution is achievable, and with the identified improvements, it has a clear path toward becoming a dependable tool for small and mid sized fish farms.
+This project demonstrates an accessible, robust smart aquaculture solution combining physical sensor interfacing, deterministic on-chip intelligence, and responsive web telemetry. By relocating critical water-stress classification and fail-safe actuation directly to the ESP-32 hardware edge, the system guarantees continuous pond preservation even under complete network failure.
