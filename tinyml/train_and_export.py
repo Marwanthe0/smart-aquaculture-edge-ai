@@ -35,3 +35,12 @@ X = np.column_stack([temperature, ph, turbidity])
 y = np.array(labels)
 
 print(f"Generated {num_samples} training samples across 3 sensor features.")
+
+
+# Train Decision Tree Classifier
+# max_depth=4 keeps execution fast and prevents tree over-expansion for microcontroller targets
+classifier = DecisionTreeClassifier(max_depth=4, random_state=42)
+classifier.fit(X, y)
+
+accuracy = classifier.score(X, y) * 100.0
+print(f"Model trained successfully. Accuracy: {accuracy:.2f}%")
