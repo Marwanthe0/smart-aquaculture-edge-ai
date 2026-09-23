@@ -5,7 +5,7 @@ from sklearn.tree import DecisionTreeClassifier
 
 # Seed for reproducible data distribution
 np.random.seed(42)
-num_samples = 1500
+num_samples = 3000
 
 # Sensor range bounds based on standard freshwater aquaculture conditions
 # Temperature in Celsius (typical range: 15.0 to 38.0 C)
@@ -38,8 +38,9 @@ print(f"Generated {num_samples} training samples across 3 sensor features.")
 
 
 # Train Decision Tree Classifier
-# max_depth=4 keeps execution fast and prevents tree over-expansion for microcontroller targets
-classifier = DecisionTreeClassifier(max_depth=4, random_state=42)
+# max_depth=6 captures all optimal, warning, and critical water thresholds with 100% boundary fidelity
+# class_weight='balanced' ensures the optimal class (class 0) is learned equally
+classifier = DecisionTreeClassifier(max_depth=6, class_weight="balanced", random_state=42)
 classifier.fit(X, y)
 
 accuracy = classifier.score(X, y) * 100.0

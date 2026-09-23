@@ -42,7 +42,7 @@ The system moves beyond traditional telemetry by embedding an intelligence layer
 
 #### 1. Training & Synthesis Pipeline (`tinyml/train_and_export.py`)
 Rather than deploying heavy inference runtimes (e.g., full TensorFlow or ONNX engines) that exhaust microcontroller RAM, this project utilizes a custom synthesis pipeline:
-* **Model Selection:** A depth-bounded Decision Tree Classifier (`max_depth = 4`) trained on freshwater aquaculture physiological standards.
+* **Model Selection:** A depth-bounded Decision Tree Classifier (`max_depth = 6`, balanced class weighting) trained on freshwater aquaculture physiological standards.
 * **C++ Code Synthesis:** The script traverses the binary tree structure recursively and exports the decision boundaries as a clean, self-contained C++ header file (`water_quality_model.h`).
 * **Zero Overhead:** The generated code uses compile-time `inline` branching with zero dynamic heap allocations (`malloc`), consuming under 1 KB of flash memory.
 
@@ -52,22 +52,78 @@ The generated C++ function directly maps sensor floating-point inputs against tr
 ```cpp
 // Executed directly on ESP-32 every 3 seconds:
 inline int predict_water_quality(float temperature, float ph, float turbidity) {
-    if (turbidity <= 75.0360f) {
-        if (ph <= 9.4999f) {
-            if (ph <= 5.5005f) {
-                return 2; // Critical: Severe Acidity
-            } else {
-                if (temperature <= 34.0274f) {
-                    return 1; // Warning: Sub-optimal temperature
+    if (turbidity <= 34.5673f) {
+        if (ph <= 8.5054f) {
+            if (ph <= 6.5128f) {
+                if (ph <= 5.4915f) {
+                    return 2; // Class 2: Critical Acidity
                 } else {
-                    return 2; // Critical: Extreme Thermal Stress
+                    if (temperature <= 34.0519f) {
+                        if (temperature <= 17.9361f) {
+                            return 2; // Class 2: Low Temperature
+                        } else {
+                            return 1; // Class 1: Sub-optimal pH
+                        }
+                    } else {
+                        return 2; // Class 2: High Temperature
+                    }
+                }
+            } else {
+                if (temperature <= 21.9040f) {
+                    if (temperature <= 17.9326f) {
+                        return 2; // Class 2: Low Temperature
+                    } else {
+                        return 1; // Class 1: Sub-optimal Temperature
+                    }
+                } else {
+                    if (temperature <= 31.0705f) {
+                        return 0; // Class 0: OPTIMAL Safe Range
+                    } else {
+                        if (temperature <= 33.9867f) {
+                            return 1; // Class 1: Sub-optimal Warm
+                        } else {
+                            return 2; // Class 2: Thermal Stress
+                        }
+                    }
                 }
             }
         } else {
-            return 2; // Critical: Severe Alkalinity
+            if (ph <= 9.4990f) {
+                if (temperature <= 34.1570f) {
+                    if (temperature <= 18.0062f) {
+                        return 2; // Class 2: Low Temperature
+                    } else {
+                        return 1; // Class 1: Mild Alkaline
+                    }
+                } else {
+                    return 2; // Class 2: High Temperature
+                }
+            } else {
+                return 2; // Class 2: Critical Alkaline
+            }
         }
     } else {
-        return 2; // Critical: High Silt / Extreme Turbidity
+        if (turbidity <= 74.9392f) {
+            if (ph <= 5.5245f) {
+                return 2; // Class 2: Critical Acidity
+            } else {
+                if (ph <= 9.5204f) {
+                    if (temperature <= 34.0045f) {
+                        if (temperature <= 18.0015f) {
+                            return 2; // Class 2: Low Temperature
+                        } else {
+                            return 1; // Class 1: Elevated Turbidity
+                        }
+                    } else {
+                        return 2; // Class 2: Heat + Turbidity
+                    }
+                } else {
+                    return 2; // Class 2: Alkaline Drift
+                }
+            }
+        } else {
+            return 2; // Class 2: Critical Turbidity
+        }
     }
 }
 ```
